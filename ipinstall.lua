@@ -33,6 +33,37 @@ local PROGRAM_DESCRIPTION = "-"
 local INSTALLER_NAME = "IPInstaller - Internet Program Installer" -- name of your installer program
 local INSTALLER_DESCRIPTION = "This is just a dummy installer program that does nothing" -- description of your installer program
 
+--localisation strings
+local localisation = {
+  ["install.move"] = "Please wait, "..INSTALLER_NAME.." is moving program files",
+  ["install.move.fail"] = "Couldn't move %s to %s: %s",
+  ["install.move.v"] = "Moved %s to %s",
+  ["install.download"] = "Please wait, "..INSTALLER_NAME.." is downloading program files",
+  ["install.download.v"] = "Downloaded %s from %s",
+  ["install.download.fail"] = "Failed files download. Check your internet connection or contact with installer provider.",
+  ["install.download.ok"] = "All files downloaded.",
+  ["install.success"] = "Successfully installed.",
+  ["uninstall.delete"] = "Please wait, "..INSTALLER_NAME.." is removing program files",
+  ["uninstall.delete.v"] = "Removed %s",
+  ["uninstall.success"] = "Successfully uninstalled.",
+  
+  ["error.nointernet"] = INSTALLER_NAME.." requires an internet card to run.",
+  ["error.httpfail"] = "HTTP request failed: %s",
+  ["error.writefail"] = "Failed opening file for writing: %s",
+  
+  ["info"] = PROGRAM_NAME.."\n"..PROGRAM_DESCRIPTION,
+  ["help"] = INSTALLER_NAME.."\n"..INSTALLER_DESCRIPTION.."\n\n"..[[
+Usage: %s [-qQ] <action...>
+ -q: Quiet mode - no status messages.
+ -Q: Superquiet mode - no error messages.
+ -v: Be more verbose.
+Actions:
+  install: Install program to your PC
+  uninstall: Uninstall program from your PC
+  info: Get info about this program
+]]
+}
+
 --END BASE VARIABLES
 
 local component = require("component")
@@ -42,7 +73,7 @@ local internet = require("internet")
 local process = require("process")
 
 if not component.isAvailable("internet") then
-  io.stderr:write("This program requires an internet card to run.")
+  io.stderr:write(localisation["error.nointernet"])
   return
 end
 
@@ -51,134 +82,136 @@ options.q = options.q or options.Q
 options.h = options.h or options.help
 
 if options.h or #args ~= 1 then
-	local seg = fs.segments(shell.resolve(process.info().path))
-	io.write(INSTALLER_NAME.."\n")
-	io.write(INSTALLER_DESCRIPTION.."\n\n")
-  io.write("Usage: "..seg[#seg].." [-qQ] <action...>\n")
-  io.write(" -q: Quiet mode - no status messages.\n")
-  io.write(" -Q: Superquiet mode - no error messages.\n")
-  io.write("Actions:\n")
-  io.write("  install: Install program to your PC\n")
-  io.write("  uninstall: Uninstall program from your PC\n")
-  io.write("  info: Get info about this program")
+  local seg = fs.segments(shell.resolve(process.info().path))
+  io.write(string.format(localisation["help"], seg[#seg]))
   return
 end
 
 if args[1] == "info" then
-	io.write(PROGRAM_NAME.."\n")
-	io.write(PROGRAM_DESCRIPTION)
-	return
+  io.write(localisation["info"])
+  return
 end
 
 if args[1] == "uninstall" then
-	for _,file in pairs(files) do
-		if not options.q and fs.remove(installdir..file[2]) then
-			print("Deleted file "..installdir..file[2])
-		end
-	end
-	if not options.q then
-		print("Successfully uninstalled "..PROGRAM_NAME)
-	end
-	return
+        if not options.q then
+    print(localisation["uninstall.delete"])
+  end
+  for _,file in pairs(files) do
+    if not options.q and fs.remove(installdir..file[2]) and options.v then
+      print(string.format(localisation["uninstall.delete.v"], installdir..file[2]))
+    end
+  end
+  if not options.q then
+    print(localisation["uninstall.success"])
+  end
+  return
 end
 
 if not options.q then
-	print("Please wait, while "..INSTALLER_NAME.." is downloading program files...")
+  print(localisation["install.download"])
 end
 
 local function download(url, filename)
-	local f
-	local result, response = pcall(internet.request, url, nil, {["user-agent"]="Wget/OpenComputers"})
-	if result then
-	  local result, reason = pcall(function()
-	    for chunk in response do
-	      if not f then
-	        f, reason = io.open(filename, "wb")
-	        if not f then
-	        	if not options.Q then
-	        		io.stderr:write("Failed opening file for writing: "..reason)
-	        	end
-	        	return nil, reason
-	        end
-	      end
-	      f:write(chunk)
-	    end
-	  end)
-	  if not result then
-	    if f then
-	      f:close()
-	      fs.remove(filename)
-	    end
-	    if not options.Q then
-	    	io.stderr:write("HTTP request failed: " .. reason .. "\n")
-	    end
-	    return nil, reason
-	  end
-	  
-	  if f then
-	    f:close()
-	  end
-	else
-		if not options.Q then
-	  	io.stderr:write("HTTP request failed: " .. response .. "\n")
-	  end
-	  return nil, response
-	end
-	return true
+  local f
+  local result, response = pcall(internet.request, url, nil, {["user-agent"]="IPInstall/OpenComputers"})
+  if result then
+    local result, reason = pcall(function()
+      for chunk in response do
+        if not f then
+          f, reason = io.open(filename, "wb")
+          if not f then
+            if not options.Q then
+              io.stderr:write(string.format(localisation["error.writefail"].."\n", reason))
+            end
+            return nil, reason
+          end
+        end
+        f:write(chunk)
+      end
+    end)
+    if not result then
+      if f then
+        f:close()
+        fs.remove(filename)
+      end
+      if not options.Q then
+        io.stderr:write(string.format(localisation["error.httpfail"].."\n", reason))
+      end
+      return nil, reason
+    end
+    
+    if f then
+      f:close()
+    end
+  else
+    if not options.Q then
+      io.stderr:write(string.format(localisation["error.httpfail"].."\n", reason))
+    end
+    return nil, response
+  end
+  return true
 end
 
 local function move(from, to)
-	local ok, reason = fs.copy(from, to)
-	if not ok then return nil, reason end
-	fs.remove(from)
-	return true
+  local ok, reason = fs.copy(from, to)
+  if not ok then return nil, reason end
+  fs.remove(from)
+  return true
+end
+
+local function shorten(s, len)
+  return string.sub(s, 0, math.floor(len/5)).."..."..string.sub(s, #s-len+math.floor(len/5)-4)
 end
 
 fs.makeDirectory(tmpdir)
 for _,f in pairs(files) do
-	fs.makeDirectory(fs.concat(tmpdir, f[2], ".."))
+  fs.makeDirectory(fs.concat(tmpdir, f[2], ".."))
 end
 
 local successing = true
 for _,v in pairs(files) do
-	local url
-	if v[1]:sub(0,1) ~= "!" then
-		url = baseurl..v[1]
-	else
-		url = v[1]:sub(2)
-	end
-	local ok, reason = download(url, tmpdir..v[2])
-	if not ok then
-		successing = false
-		break
-	end
-	if not options.q then
-		print("Downloaded "..v[2])
-	end
+  local url
+  if v[1]:sub(0,1) ~= "!" then
+    url = baseurl..v[1]
+  else
+    url = v[1]:sub(2)
+  end
+  local ok, reason = download(url, tmpdir..v[2])
+  if not ok then
+    successing = false
+    break
+  end
+  if not options.q and options.v then
+    local fr = string.find(url, "//")+2
+    print(string.format(localisation["install.download.v"], v[2], shorten(string.sub(url, fr), 30)))
+  end
 end
 
 if not successing then
-	if not options.Q then
-		io.stderr:write("Files download failed(check log)\nAborting installation")
-	end
-	fs.remove(tmpdir)
-	return false
+  if not options.Q then
+    io.stderr:write(localisation["install.download.fail"].."\n")
+  end
+  fs.remove(tmpdir)
+  return false
 end
 if not options.q then
-	print("All OK, installing "..PROGRAM_NAME)
+  print(localisation["install.download.ok"].."\n"..localisation["install.move"])
 end
 
 fs.makeDirectory(installdir)
 for _,f in pairs(files) do
-	fs.makeDirectory(fs.concat(installdir, f[2], ".."))
+  fs.makeDirectory(fs.concat(installdir, f[2], ".."))
 end
 for _,file in pairs(files) do
-	if not move(tmpdir..file[2], installdir..file[2]) then
-		io.stderr:write("Couldn't install file \""..file[2].."\"\n")
-	end
+  local ok, reason = move(tmpdir..file[2], installdir..file[2])
+  if not ok then
+    io.stderr:write(string.format(localisation["install.move.fail"].."\n", tmpdir..file[2], installdir..file[2], reason))
+  elseif options.v then
+    print(string.format(localisation["install.move.v"], tmpdir..file[2], installdir..file[2]))
+  end
 end
 fs.remove(tmpdir)
 if not options.q then
-	print("Successfully installed "..PROGRAM_NAME)
+  print(localisation["install.success"])
 end
 return
